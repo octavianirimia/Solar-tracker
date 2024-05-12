@@ -1,0 +1,218 @@
+#include <LiquidCrystal_I2C.h>
+#include <Wire.h>
+#include <Adafruit_INA219.h>
+#include <Servo.h>
+
+// Declarare ina
+Adafruit_INA219 ina219;
+
+// Declararea servomotoarelor
+Servo servo_sus_jos;
+Servo servo_stanga_dreapta;
+
+// Declarare LCD
+LiquidCrystal_I2C lcd(0x27, 20, 4);
+
+// Definire fotorezistori
+#define dreapta_jos 0
+#define stanga_jos 1
+#define dreapta_sus 2
+#define stanga_sus 3
+
+// Declararea variabilelor pentru inregistrarea valorilor citite pe LDR
+int analog_stanga_sus = 0;
+int analog_dreapta_sus = 0;
+int analog_stanga_jos = 0;
+int analog_dreapta_jos = 0;
+
+// Limitari servo
+int servo_sus_jos_limita_superioara = 60;
+int servo_sus_jos_limita_inferioara = 0;
+int servo_stanga_dreapta_limita_superioara = 180;
+int servo_stanga_dreapta_limita_inferioara = 0;
+
+// Declarare variabile folosite pentru ina
+float tensiune = 0;
+float curent = 0;
+
+// Declarare variabile de timp
+long timp_anterior = 0;
+long timp_prezent = 0;
+
+// Sensibilitate
+int sensibilitate = 3;
+
+//Buton
+int buton = 8;
+
+void setup()
+{
+    Serial.begin(9600);
+
+    // Initilizare pini servo
+    servo_sus_jos.attach(6);
+    servo_stanga_dreapta.attach(5);
+
+    //Declarare pin resetare panou
+    pinMode(9, INPUT);
+
+    // Pozitia initiala a panoului
+    servo_sus_jos.write(45);
+    servo_stanga_dreapta.write(180);
+
+    // Initializare lcd
+    lcd.init();
+
+    // Afisare mesaj pe lcd si mutarea cursorului
+    lcd.backlight();
+    lcd.setCursor(1, 0);
+    lcd.print("Proiect actionari");
+    lcd.setCursor(4, 1);
+    lcd.print("realizat de");
+    lcd.setCursor(2, 2);
+    lcd.print("Irimia Octavian");
+    lcd.setCursor(1, 3);
+    lcd.print("Pantilimon Adrian");
+
+    // Calibrare ina
+    uint32_t currentFrequency;
+    ina219.begin();
+    ina219.setCalibration_16V_400mA();
+
+    delay(3000);
+}
+
+void loop()
+{
+    // Extragerea timpului de rulare
+    timp_prezent = millis();
+
+    // Ducere panou in stare initiala pentru 5 secunde
+    if (digitalRead(buton) == LOW)
+    {
+        servo_sus_jos.write(45);
+        servo_stanga_dreapta.write(180);
+
+        lcd.clear();
+        lcd.setCursor(6, 1);
+        lcd.print("Panou in");
+        lcd.setCursor(3, 2);
+        lcd.print("stare initiala");
+
+        delay(5000);
+    }
+
+    // Apelare functie de urmarire
+    automaticsolartracker();
+
+    // Reactualizarea din 2 in 2 secunde a datelor obtinute de la panou cu ajutorul ina
+    if (timp_prezent - timp_anterior > 2000)
+    {
+        // Reactualizarea timpului anterior
+        timp_anterior = timp_prezent;
+
+        // Extragerea datelor din ina
+        tensiune = ina219.getBusVoltage_V();
+        curent = ina219.getCurrent_mA();
+
+        // Afisarea pe lcd a datelor
+        lcd.clear();
+        lcd.setCursor(2, 0);
+        lcd.print("Date panou solar:");
+        lcd.setCursor(2, 1);
+        lcd.print("Tensiune: ");
+        lcd.print(tensiune);
+        lcd.print(" V");
+        lcd.setCursor(2, 2);
+        lcd.print("Curent: ");
+        lcd.print(curent);
+        lcd.print(" mA");
+        lcd.setCursor(2, 3);
+        lcd.print("Putere: ");
+        lcd.print(tensiune * curent);
+        lcd.print(" mW");
+    }
+}
+
+void automaticsolartracker()
+{
+    // Preluarea datelor citite de pinii A0-A3
+    analog_stanga_sus = analogRead(stanga_sus);
+    analog_dreapta_sus = analogRead(dreapta_sus);
+    analog_stanga_jos = analogRead(stanga_jos);
+    analog_dreapta_jos = analogRead(dreapta_jos);
+
+    // Calcularea valorilor medii
+    int medie_sus = (analog_dreapta_sus + analog_stanga_sus) / 2;
+    int medie_jos = (analog_dreapta_jos + analog_stanga_jos) / 2;
+    int medie_stanga = (analog_stanga_sus + analog_stanga_jos) / 2;
+    int medie_dreapta = (analog_dreapta_sus + analog_dreapta_jos) / 2;
+
+    // Citirea pozitiei
+    int sus_jos_citire = servo_sus_jos.read();
+    int stanga_dreapta_citire = servo_stanga_dreapta.read();
+
+    // Miscarea motoarelor
+    if (medie_sus < medie_jos && abs(medie_sus - medie_jos) >= sensibilitate)
+    {
+        if ((sus_jos_citire + 1) > servo_sus_jos_limita_superioara)
+        {
+            sus_jos_citire = servo_sus_jos_limita_superioara;
+            servo_sus_jos.write(servo_sus_jos_limita_superioara);
+        }
+        else
+        {
+            servo_sus_jos.write(sus_jos_citire + 1);
+        }
+
+        delay(10);
+    }
+    else if (medie_sus > medie_jos && abs(medie_sus - medie_jos) >= sensibilitate)
+    {
+        if ((sus_jos_citire - 1) < servo_sus_jos_limita_inferioara)
+        {
+            sus_jos_citire = servo_sus_jos_limita_inferioara;
+            servo_sus_jos.write(servo_sus_jos_limita_inferioara);
+        }
+        else
+        {
+            servo_sus_jos.write(sus_jos_citire - 1);
+        }
+
+        delay(10);
+    }
+    else
+    {
+        servo_sus_jos.write(sus_jos_citire);
+    }
+
+    if (medie_stanga > medie_dreapta && abs(medie_stanga - medie_dreapta) >= sensibilitate)
+    {
+        servo_stanga_dreapta.write(stanga_dreapta_citire + 1);
+
+        if (stanga_dreapta_citire > servo_stanga_dreapta_limita_superioara)
+        {
+            stanga_dreapta_citire = servo_stanga_dreapta_limita_superioara;
+        }
+
+        delay(10);
+    }
+
+    else if (medie_stanga < medie_dreapta && abs(medie_stanga - medie_dreapta) >= sensibilitate)
+    {
+        servo_stanga_dreapta.write(stanga_dreapta_citire - 1);
+
+        if (stanga_dreapta_citire < servo_stanga_dreapta_limita_inferioara)
+        {
+            stanga_dreapta_citire = servo_stanga_dreapta_limita_inferioara;
+        }
+
+        delay(10);
+    }
+    else
+    {
+        servo_stanga_dreapta.write(stanga_dreapta_citire);
+    }
+
+    delay(50);
+}
